@@ -7,3 +7,12 @@ and sell to fill your GE slots for the most profit per hour from your cash stack
 Hosted with GitHub Pages; everything runs in the browser and settings are kept in local storage.
 
 **Live site:** https://sjoyner945.github.io/osrs-hc-flipper/
+
+## Store flips
+
+`shops.json` lists every NPC shop that sells items for coins (price, stock, members flag, location), built from the
+OSRS Wiki's store data. Rebuild it with:
+
+```
+python3 tools/build_shops.py shops.json
+```

@@ -113,7 +113,7 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
   <header>
     <div>
       <h1>HC Flip Planner <span class="hc">·</span> <span style="font-weight:600;font-size:1.4rem;color:var(--muted)">Hardcore GE</span></h1>
-      <p class="sub">Picks what to buy and sell to fill your GE slots for the most profit per hour, using Wiki real-time prices for the OSRS Hardcore worlds. All prices include the 2% GE tax.</p>
+      <p class="sub">Picks what to buy and sell to fill your GE slots for the most profit per hour, using Wiki real-time prices for the OSRS Hardcore worlds. HC worlds have no GE tax, so every margin is the full price difference.</p>
     </div>
     <div class="status">
       <span class="pill" id="srcPill"><span class="dot"></span><span id="srcText">Loading prices…</span></span>
@@ -147,22 +147,30 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
     <div class="slots" id="slotGrid"></div>
   </section>
 
+  <section style="display:grid;gap:10px" aria-labelledby="shopH">
+    <div class="section-head"><h2 id="shopH">Buy from stores, sell on the GE</h2><input id="shopSearch" type="search" placeholder="Filter items or shops…" aria-label="Filter store items"></div>
+    <p class="note" style="margin:0">Items an NPC shop sells for less than the GE pays. <b>Per visit</b> is how many to buy before the shop's rising price eats the profit, capped by stock, your cash and what you can sell on the GE in about an hour. GE sell at is the lower of the latest instabuy price and the past hour's average, minus 1. <i>Instant sell</i> is what you'd get dumping into buy offers; red means that loses money. Hopping worlds resets stock, but there are only a few HC worlds.</p>
+    <div class="table-wrap"><table>
+      <thead><tr id="shopHead"></tr></thead>
+      <tbody id="shopBody"></tbody>
+    </table></div>
+  </section>
+
   <section style="display:grid;gap:10px" aria-labelledby="allH">
-    <div class="section-head"><h2 id="allH">All flippable items</h2><input id="search" type="search" placeholder="Filter items…" aria-label="Filter items"></div>
+    <div class="section-head"><h2 id="allH">All GE flips</h2><input id="search" type="search" placeholder="Filter items…" aria-label="Filter items"></div>
     <div class="table-wrap"><table>
       <thead><tr id="thead"></tr></thead>
       <tbody id="tbody"></tbody>
     </table></div>
   </section>
 
-  <p class="note"><b>How it plans.</b> You buy at the latest instasell price + 1 and sell at the latest instabuy price − 1. Margin is after the 2% tax, which is capped at 5m and waived on bonds and the Wiki's exempt list. The hourly fill rate is your share of the smaller side of traded volume, capped at a quarter of the 4-hour buy limit. Volume comes from the last 3 hours of 5-minute data where we have it, otherwise from the latest 5-minute window (marked <i>5m est</i>). Cash goes to the best return per gp first. With <i>Spread cash across slots</i> on, each slot gets at most its share of your stack, so more slots get used, and any leftover tops up the best slots. HC worlds are new and thin, so check each margin with a quick buy/sell before you commit a full stack.</p>
+  <p class="note"><b>How it plans.</b> You buy at the latest instasell price + 1 and sell at the latest instabuy price − 1. HC worlds have no GE tax, so margin is simply sell price minus buy price. The hourly fill rate is your share of the smaller side of traded volume, capped at a quarter of the 4-hour buy limit. Volume comes from the last 3 hours of 5-minute data where we have it, otherwise from the latest 5-minute window (marked <i>5m est</i>). Cash goes to the best return per gp first. With <i>Spread cash across slots</i> on, each slot gets at most its share of your stack, so more slots get used, and any leftover tops up the best slots. HC worlds are new and thin, so check each margin with a quick buy/sell before you commit a full stack.</p>
 </div>
 <div class="toast" id="toast" role="status"></div>
 
 <script>
 (function () {
   const API = "https://prices.runescape.wiki/api/v2/osrs-hc/";
-  const TAX_EXEMPT = new Set([233,315,329,347,351,355,361,365,379,558,806,807,808,882,884,886,952,1733,1735,1755,1785,1891,2140,2142,2309,2327,2347,2552,3008,3010,3012,3014,3853,5325,5329,5331,5341,5343,8007,8008,8009,8010,8011,8013,8794,13190,28790,28824]);
   const $ = (id) => document.getElementById(id);
   const S = { data: null, source: null, sort: { key: "phr", dir: -1 }, plan: [] };
   const TRIGGER_ID = "trig_019zFLyTfohPdw2wGSbX1DWx";
@@ -200,6 +208,7 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
     if (!mappingCache) {
       const m = await getJSON(API + "mapping", 15000); mappingCache = {};
       m.forEach((x) => mappingCache[x.id] = { n: x.name, l: x.limit, m: x.members ? 1 : 0 });
+      S.byName = {}; m.forEach((x) => { S.byName[x.name.toLowerCase()] = String(x.id); });
     }
     const items = {}; Object.keys(latest.data).forEach((id) => { if (mappingCache[id]) items[id] = mappingCache[id]; });
     const d = { fetchedAt: Math.floor(Date.now() / 1000), latest: latest.data, fiveMin: five, items, series: (S.data && S.source === "live") ? S.data.series : {} };
@@ -211,13 +220,17 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
     }));
     return d;
   }
+  async function loadShops() {
+    if (S.shops) return;
+    try { S.shops = (await getJSON("shops.json", 20000)).shops; } catch (e) { S.shops = []; }
+  }
   async function loadSnapshot() { return getJSON("data.json?t=" + Date.now(), 15000); }
 
   let liveTimer = null;
   async function load() {
     $("refreshBtn").disabled = true; $("srcText").textContent = "Loading prices…";
     try {
-      try { S.data = await loadLive(); S.source = "live"; }
+      try { const [d] = await Promise.all([loadLive(), loadShops()]); S.data = d; S.source = "live"; }
       catch (e) { S.data = await loadSnapshot(); S.source = "snapshot"; }
       $("banner").hidden = true;
     } catch (e) {
@@ -256,8 +269,7 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
       if (f2p && it.m) continue;
       if (!L.high || !L.low) continue;
       const buyAt = L.low + 1, sellAt = L.high - 1;
-      const tax = TAX_EXEMPT.has(+id) ? 0 : Math.min(Math.floor(sellAt * 0.02), 5e6);
-      const margin = sellAt - tax - buyAt;
+      const margin = sellAt - buyAt;
       const ageH = now - (L.highTime || 0), ageL = now - (L.lowTime || 0), age = Math.max(ageH, ageL);
       const v = volumeFor(d, id);
       const flow = Math.min(v.hi, v.lo) * share;
@@ -271,7 +283,7 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
       if (Math.min(v.hi, v.lo) < 20) chips.push(["warn", "thin volume"]);
       if (it.l && flow > limitPh) chips.push(["ok", "limit-capped"]);
       const ok = margin > 0 && age <= maxAge && roi <= maxRoi && qph >= 1;
-      rows.push({ id, name: it.n, limit: it.l, members: it.m, buyAt, sellAt, tax, margin, roi, age, volHi: v.hi, volLo: v.lo,
+      rows.push({ id, name: it.n, limit: it.l, members: it.m, buyAt, sellAt, margin, roi, age, volHi: v.hi, volLo: v.lo,
         qph, phrCap: margin * qph, chips, ok, est: v.est });
     }
     return rows;
@@ -303,6 +315,89 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
     const b = fill(ok.slice().sort((x, y) => y.phrCap - x.phrCap));
     const tot = (p) => p.reduce((s, r) => s + r.phr, 0);
     return tot(a) >= tot(b) ? a : b;
+  }
+
+  // Shop prices rise as you buy: each unit bought adds delta/1000 of the item's base value
+  // (the Wiki's store_delta). Buy while the next unit still sells on the GE for a profit.
+  function analyseShops() {
+    if (!S.shops || !S.byName || !S.data) return [];
+    const f2p = $("slots").value === "3", cash = Math.max(0, +$("cash").value || 0);
+    const share = Math.max(0.01, (+$("share").value || 20) / 100);
+    const maxAge = (+$("maxAge").value || 30) * 60;
+    const now = S.source === "live" ? Date.now() / 1000 : S.data.fetchedAt;
+    const out = [];
+    for (const sh of S.shops) {
+      if (f2p && sh.mem) continue;
+      const id = S.byName[sh.item.toLowerCase()]; if (!id) continue;
+      const L = S.data.latest[id]; if (!L || !L.high) continue;
+      if (now - (L.highTime || 0) > maxAge) continue;
+      const v = volumeFor(S.data, id);
+      // use the hour's average instabuy price when the latest trade is above it (one-off spikes)
+      const sellAt = Math.floor(Math.min(L.high, v.avgHi || L.high)) - 1;
+      if (sellAt - sh.price < 1) continue;
+      const demand = Math.floor(v.hi * share);           // what you can sell into buy offers in ~1h
+      if (demand < 1) continue;
+      const base = sh.sellMult ? sh.price * 1000 / sh.sellMult : sh.price;
+      const step = base * (sh.delta || 0) / 1000;
+      const stock = sh.stock == null ? Infinity : sh.stock;
+      let qty = 0, cost = 0, profit = 0;
+      const cap = Math.min(stock, demand, 5000);
+      while (qty < cap) {
+        const unit = Math.floor(sh.price + step * qty);
+        if (sellAt - unit < 1 || cost + unit > cash) break;
+        qty++; cost += unit; profit += sellAt - unit;
+      }
+      if (qty < 1) continue;
+      out.push({ id, name: sh.item, shop: sh.shop, loc: sh.loc, mem: sh.mem, price: sh.price, sellAt, quick: L.low, each: sellAt - sh.price,
+        stock: sh.stock, qty, cost, profit, demand, est: v.est, age: now - (L.highTime || 0) });
+    }
+    // all shops selling one item compete for the same GE buyers: keep the best shop per item
+    const best = {};
+    out.forEach((r) => { const b = best[r.id]; if (!b) { best[r.id] = r; r.others = []; } else if (r.profit > b.profit || (r.profit === b.profit && r.mem < b.mem)) { r.others = b.others.concat(b); best[r.id] = r; } else b.others.push(r); });
+    return Object.values(best);
+  }
+  const SHOP_COLS = [["name", "Item"], ["shop", "Shop"], ["price", "Shop price"], ["sellAt", "GE sell at"], ["quick", "Instant sell"], ["each", "Profit each"],
+    ["stock", "Stock"], ["qty", "Buy per visit"], ["profit", "Profit per visit"], ["demand", "You can sell /h"]];
+  S.shopSort = { key: "profit", dir: -1 };
+  let lastShopRows = [];
+  function renderShops() {
+    const head = $("shopHead"); head.innerHTML = "";
+    SHOP_COLS.forEach(([k, label]) => {
+      const th = document.createElement("th"); th.textContent = label; th.scope = "col"; th.tabIndex = 0;
+      if (S.shopSort.key === k) th.setAttribute("aria-sort", S.shopSort.dir < 0 ? "descending" : "ascending");
+      const go = () => { S.shopSort = { key: k, dir: S.shopSort.key === k ? -S.shopSort.dir : (k === "name" || k === "shop" ? 1 : -1) }; renderShops(); };
+      th.addEventListener("click", go); th.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+      head.appendChild(th);
+    });
+    const q = $("shopSearch").value.trim().toLowerCase(), k = S.shopSort.key, dir = S.shopSort.dir;
+    const rows = lastShopRows.filter((r) => !q || r.name.toLowerCase().includes(q) || r.shop.toLowerCase().includes(q) || r.loc.toLowerCase().includes(q))
+      .sort((a, b) => { const x = a[k] ?? Infinity, y = b[k] ?? Infinity; return typeof x === "string" ? dir * x.localeCompare(y) : dir * (x - y); })
+      .slice(0, 100);
+    const tb = $("shopBody"); tb.innerHTML = "";
+    if (!S.shops) { tb.innerHTML = '<tr><td colspan="10" style="text-align:left;color:var(--muted)">Loading shop list…</td></tr>'; return; }
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="10" style="text-align:left;color:var(--muted)">No profitable store items right now.</td></tr>'; return; }
+    const frag = document.createDocumentFragment();
+    rows.forEach((r) => {
+      const tr = document.createElement("tr");
+      const td0 = document.createElement("td"), a = document.createElement("a");
+      a.href = "https://prices.runescape.wiki/osrs-hc/item/" + r.id; a.target = "_blank"; a.rel = "noopener"; a.textContent = r.name; td0.appendChild(a);
+      const td1 = document.createElement("td"); td1.style.fontFamily = "var(--body)"; td1.style.textAlign = "left";
+      const sa = document.createElement("a"); sa.href = "https://oldschool.runescape.wiki/w/" + encodeURIComponent(r.shop.replace(/ /g, "_")); sa.target = "_blank"; sa.rel = "noopener";
+      sa.textContent = r.shop; td1.appendChild(sa);
+      if (r.loc) { const sm = document.createElement("span"); sm.style.color = "var(--muted)"; sm.textContent = " · " + r.loc; td1.appendChild(sm); }
+      if (r.mem) { const m = document.createElement("span"); m.className = "chip warn"; m.style.marginLeft = "6px"; m.textContent = "P2P"; td1.appendChild(m); }
+      if (r.others.length) {
+        const o = document.createElement("div"); o.style.color = "var(--muted)"; o.style.fontSize = ".75rem";
+        const names = r.others.slice(0, 3).map((x) => x.shop + (x.loc ? " (" + x.loc + ")" : "")).join(", ");
+        o.textContent = "+" + r.others.length + " other shop" + (r.others.length > 1 ? "s" : "") + ": " + names + (r.others.length > 3 ? ", …" : "");
+        o.title = r.others.map((x) => x.shop).join(", "); td1.style.whiteSpace = "normal"; td1.style.minWidth = "220px"; td1.appendChild(o);
+      }
+      tr.append(td0, td1);
+      [full(r.price), full(r.sellAt), r.quick ? full(r.quick) : "–", full(r.each), r.stock == null ? "∞" : full(r.stock), full(r.qty), gp(r.profit), full(r.demand) + (r.est ? "*" : "")]
+        .forEach((c, i) => { const td = document.createElement("td"); td.textContent = c; if (i === 3 || i === 6) td.className = "pos"; if (i === 2 && r.quick && r.quick <= r.price) td.className = "neg"; tr.appendChild(td); });
+      frag.appendChild(tr);
+    });
+    tb.appendChild(frag);
   }
 
   // ---- render ----
@@ -379,7 +474,7 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
       legs.append(legEl("buy", "Buy", p.buyAt, p.qty), legEl("sell", "Sell", p.sellAt, p.qty));
       const kv = document.createElement("dl"); kv.className = "kv";
       const fillMin = p.qph ? Math.round(p.qty / p.qph * 60) : null;
-      [["Est. profit / hour", gp(p.phr), "big"], ["Profit per item", full(p.margin) + (p.tax ? " (tax " + full(p.tax) + ")" : " (no tax)")],
+      [["Est. profit / hour", gp(p.phr), "big"], ["Profit per item", full(p.margin)],
        ["Cash needed", full(p.cost)], ["Buy limit (4h)", p.limit ? full(p.limit) : "unknown"], ["Fills in about", fillMin != null ? (fillMin <= 60 ? fillMin + " min" : (fillMin / 60).toFixed(1) + " h") : "–"]]
         .forEach(([k, v, c]) => { const dt = document.createElement("dt"); dt.textContent = k; const dd = document.createElement("dd"); dd.textContent = v; if (c) dd.className = c; kv.append(dt, dd); });
       card.append(top, a, legs, kv);
@@ -401,6 +496,7 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
     $("sRoi").textContent = cash ? pct(profit / cash) : "–";
     renderSlots(S.plan, slots);
     renderTable();
+    lastShopRows = analyseShops(); renderShops();
     const pill = $("srcPill");
     if (S.source === "live") { pill.className = "pill live"; $("srcText").textContent = "Live · updates every minute"; }
     else {
@@ -413,6 +509,7 @@ tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
 
   INPUTS.forEach((k) => $(k).addEventListener("input", () => { saveSettings(); render(); }));
   $("search").addEventListener("input", renderTable);
+  $("shopSearch").addEventListener("input", renderShops);
   $("refreshBtn").addEventListener("click", load);
 
   // In the claude.ai viewer the page cannot reach the Wiki API, so the button asks a
